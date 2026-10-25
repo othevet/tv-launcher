@@ -56,3 +56,7 @@ Revenir en arrière :
 ```bash
 adb shell pm enable com.google.android.tvlauncher
 ```
+
+## Licence
+
+[MIT](LICENSE)
