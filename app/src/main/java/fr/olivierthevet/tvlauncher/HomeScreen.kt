@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -64,15 +66,25 @@ import java.util.Locale
 
 private val Background = Color(0xFF0B0F17)
 private val CardColor = Color(0xFF161C28)
+// Effet verre (façon Apple TV) : voile blanc translucide et liseré clair en haut.
+private val GlassFill = Color.White.copy(alpha = 0.08f)
+private val GlassFocused = Color.White.copy(alpha = 0.18f)
+private val GlassStroke = BorderStroke(
+    1.dp,
+    Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.3f), Color.White.copy(alpha = 0.06f))),
+)
 private val Accent = Color(0xFF60A5FA)
 private val TextMuted = Color(0xFF9CA3AF)
 private val ScreenMargin = 48.dp
+// Colonne de droite : la météo et la rangée VPN / Sources / Paramètres ont la même largeur.
+private val SideWidth = 300.dp
+private val SideButtonHeight = 40.dp
 private val VpnOn = Color(0xFF34D399)
 private val VpnOff = Color(0xFF6B7280)
+private val Warning = Color(0xFFFBBF24)
 
 private const val KEY_HEADER = "header"
 private const val KEY_ADD = "add"
-private const val KEY_SETTINGS = "settings"
 
 @Composable
 fun HomeScreen(refreshKey: Int) {
@@ -85,6 +97,9 @@ fun HomeScreen(refreshKey: Int) {
     // Appui long sur une app : menu (Déplacer / Retirer), puis éventuellement mode déplacement.
     var menuFor by remember { mutableStateOf<TvApp?>(null) }
     var moving by remember { mutableStateOf<String?>(null) }
+    // Entrées HDMI listées dans le menu "Sources" (null = menu fermé).
+    var sources by remember { mutableStateOf<List<TvSource>?>(null) }
+    val weather = rememberWeather()
     val homeApps = pinned.mapNotNull { pkg -> allApps.find { it.component.packageName == pkg } }
     val gridState = rememberLazyGridState()
 
@@ -147,13 +162,14 @@ fun HomeScreen(refreshKey: Int) {
             }
         }
     }
-
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, surface = CardColor)) {
         Box(
             Modifier
                 .fillMaxSize()
                 .background(Background)
         ) {
+            Wallpaper(weather.weather, bottom = Background)
+
             if (picking) {
                 AppPicker(
                     apps = allApps.filter { it.component.packageName !in pinned },
@@ -177,10 +193,17 @@ fun HomeScreen(refreshKey: Int) {
                     verticalAlignment = Alignment.Top,
                 ) {
                     Clock()
-                    Column(horizontalAlignment = Alignment.End) {
-                        WeatherCard()
+                    Column(Modifier.width(SideWidth)) {
+                        WeatherCard(weather, Modifier.fillMaxWidth())
                         Spacer(Modifier.height(12.dp))
-                        VpnStatus { launchSurfshark(context) }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            VpnStatus(Modifier.weight(1f)) { launchSurfshark(context) }
+                            SideButton("⇄") { sources = loadHdmiSources(context) }
+                            SideButton("⚙") { launchSettings(context) }
+                        }
                     }
                 }
 
@@ -228,10 +251,22 @@ fun HomeScreen(refreshKey: Int) {
                             picking = true
                         }
                     }
-                    item(key = KEY_SETTINGS) {
-                        ActionTile("⚙", "Paramètres") { launchSettings(context) }
-                    }
                 }
+            }
+
+            sources?.let { list ->
+                val close = { sources = null }
+                MenuDialog(
+                    title = "Sources",
+                    message = if (list.isEmpty()) "Aucune entrée HDMI branchée." else null,
+                    onDismiss = close,
+                    items = list.map { source ->
+                        source.label to {
+                            close()
+                            launchSource(context, source)
+                        }
+                    } + ("Annuler" to close),
+                )
             }
 
             menuFor?.let { app ->
@@ -307,6 +342,25 @@ private fun AppPicker(apps: List<TvApp>, onPick: (TvApp) -> Unit) {
 
 @Composable
 private fun AppMenu(app: TvApp, onDismiss: () -> Unit, onMove: () -> Unit, onRemove: () -> Unit) {
+    MenuDialog(
+        title = app.label,
+        onDismiss = onDismiss,
+        items = listOf(
+            "Déplacer" to onMove,
+            "Retirer de l'accueil" to onRemove,
+            "Annuler" to onDismiss,
+        ),
+    )
+}
+
+/** Petite fenêtre avec un titre et une liste de choix (focus sur le premier). */
+@Composable
+private fun MenuDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    items: List<Pair<String, () -> Unit>>,
+    message: String? = null,
+) {
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         repeat(10) {
@@ -319,15 +373,17 @@ private fun AppMenu(app: TvApp, onDismiss: () -> Unit, onMove: () -> Unit, onRem
         Column(
             Modifier
                 .width(360.dp)
-                .background(CardColor, RoundedCornerShape(16.dp))
+                .background(CardColor.copy(alpha = 0.92f), RoundedCornerShape(16.dp))
+                .border(GlassStroke, RoundedCornerShape(16.dp))
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(app.label, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Medium)
+            Text(title, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Medium)
+            message?.let { Text(it, color = TextMuted, fontSize = 16.sp) }
             Spacer(Modifier.height(4.dp))
-            MenuItem("Déplacer", Modifier.focusRequester(firstFocus), onMove)
-            MenuItem("Retirer de l'accueil", onClick = onRemove)
-            MenuItem("Annuler", onClick = onDismiss)
+            items.forEachIndexed { index, (label, onClick) ->
+                MenuItem(label, if (index == 0) Modifier.focusRequester(firstFocus) else Modifier, onClick)
+            }
         }
     }
 }
@@ -339,7 +395,8 @@ private fun MenuItem(label: String, modifier: Modifier = Modifier, onClick: () -
         modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Background,
+            containerColor = GlassFill,
+            contentColor = Color.White,
             focusedContainerColor = Accent,
             focusedContentColor = Background,
         ),
@@ -379,7 +436,7 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun Clock() {
+private fun rememberNow(): LocalDateTime {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -387,48 +444,51 @@ private fun Clock() {
             delay(1_000)
         }
     }
-    val date = now.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.FRENCH))
-        .replaceFirstChar { it.titlecase(Locale.FRENCH) }
+    return now
+}
 
+private fun LocalDateTime.hourText() = format(DateTimeFormatter.ofPattern("HH:mm"))
+
+private fun LocalDateTime.dateText() = format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.FRENCH))
+    .replaceFirstChar { it.titlecase(Locale.FRENCH) }
+
+@Composable
+private fun Clock() {
+    val now = rememberNow()
     Column {
-        Text(
-            now.format(DateTimeFormatter.ofPattern("HH:mm")),
-            color = Color.White,
-            fontSize = 72.sp,
-            fontWeight = FontWeight.Light,
-        )
-        Text(date, color = TextMuted, fontSize = 20.sp)
+        Text(now.hourText(), color = Color.White, fontSize = 72.sp, fontWeight = FontWeight.Light)
+        Text(now.dateText(), color = TextMuted, fontSize = 20.sp)
     }
 }
 
 @Composable
-private fun WeatherCard() {
-    var weather by remember { mutableStateOf<Weather?>(null) }
-    LaunchedEffect(Unit) {
-        // Au démarrage de la TV, le réseau (ou l'heure, nécessaire au HTTPS) n'est pas
-        // forcément prêt : en cas d'échec, on réessaie vite au lieu d'attendre 15 min.
-        while (true) {
-            val result = fetchWeather()
-            if (result != null) weather = result
-            delay(if (result != null) 15 * 60 * 1_000L else 30 * 1_000L)
-        }
-    }
-
+private fun WeatherCard(state: WeatherState, modifier: Modifier = Modifier) {
     Row(
-        Modifier
-            .background(CardColor, RoundedCornerShape(16.dp))
+        modifier
+            .background(GlassFill, RoundedCornerShape(16.dp))
+            .border(GlassStroke, RoundedCornerShape(16.dp))
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val w = weather
+        val w = state.weather
         if (w == null) {
-            Text("Météo…", color = TextMuted, fontSize = 18.sp)
+            val problem = when {
+                !state.online -> "Pas de réseau"
+                state.failed -> "Météo indisponible"
+                else -> null
+            }
+            if (problem != null) {
+                Box(Modifier.size(10.dp).background(Warning, RoundedCornerShape(50)))
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(problem ?: "Météo…", color = TextMuted, fontSize = 18.sp)
         } else {
             Text(w.symbol, fontSize = 40.sp)
             Spacer(Modifier.width(16.dp))
             Column {
                 Text("${w.temperature}°", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Medium)
                 Text("${w.label} · ${w.min}° / ${w.max}°", color = TextMuted, fontSize = 14.sp)
+                Text("Demain ${w.tomorrowSymbol} ${w.tomorrowMin}° / ${w.tomorrowMax}°", color = TextMuted, fontSize = 14.sp)
                 Text(BuildConfig.WEATHER_CITY, color = TextMuted, fontSize = 12.sp)
             }
         }
@@ -437,19 +497,19 @@ private fun WeatherCard() {
 
 /** Indicateur + bouton : ouvre Surfshark (atteignable avec "Haut" depuis la rangée d'apps). */
 @Composable
-private fun VpnStatus(onClick: () -> Unit) {
+private fun VpnStatus(modifier: Modifier = Modifier, onClick: () -> Unit) {
     val connected = rememberVpnConnected()
     Surface(
         onClick = onClick,
+        modifier = modifier.height(SideButtonHeight),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
         colors = tileColors(),
-        border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(BorderStroke(2.dp, Accent), shape = RoundedCornerShape(50)),
-        ),
+        border = pillBorder(),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
     ) {
         Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(10.dp).background(if (connected) VpnOn else VpnOff, RoundedCornerShape(50)))
@@ -463,6 +523,23 @@ private fun VpnStatus(onClick: () -> Unit) {
     }
 }
 
+/** Petit bouton rond à droite du VPN : Sources (entrées HDMI) et Paramètres. */
+@Composable
+private fun SideButton(symbol: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(SideButtonHeight),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors = tileColors(),
+        border = pillBorder(),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(symbol, color = Color.White, fontSize = 18.sp)
+        }
+    }
+}
+
 // 5 tuiles par ligne sur la largeur utile (960 dp à 1080p, moins les marges).
 private val TileWidth = 160.dp
 private val TileHeight = 90.dp
@@ -470,13 +547,21 @@ private val TileSpacing = 14.dp
 
 @Composable
 private fun tileColors() = ClickableSurfaceDefaults.colors(
-    containerColor = CardColor,
-    focusedContainerColor = CardColor,
+    containerColor = GlassFill,
+    focusedContainerColor = GlassFocused,
+)
+
+// Liseré de verre aussi autour des bannières d'apps, contour bleu au focus.
+@Composable
+private fun tileBorder() = ClickableSurfaceDefaults.border(
+    border = Border(GlassStroke, shape = RoundedCornerShape(12.dp)),
+    focusedBorder = Border(BorderStroke(3.dp, Accent), shape = RoundedCornerShape(12.dp)),
 )
 
 @Composable
-private fun tileBorder() = ClickableSurfaceDefaults.border(
-    focusedBorder = Border(BorderStroke(3.dp, Accent), shape = RoundedCornerShape(12.dp)),
+private fun pillBorder() = ClickableSurfaceDefaults.border(
+    border = Border(GlassStroke, shape = RoundedCornerShape(50)),
+    focusedBorder = Border(BorderStroke(2.dp, Accent), shape = RoundedCornerShape(50)),
 )
 
 @Composable
@@ -536,7 +621,7 @@ private fun AppTile(
     }
 }
 
-/** Tuile sans app derrière : "+" (ajouter) ou Paramètres. */
+/** Tuile sans app derrière : "+" (ajouter). */
 @Composable
 private fun ActionTile(symbol: String, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Tile(label, modifier, onClick = onClick) {

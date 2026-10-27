@@ -17,25 +17,35 @@ import androidx.compose.ui.platform.LocalContext
  * Android ne dit pas vers quel pays : seulement si un tunnel est actif.
  */
 @Composable
-fun rememberVpnConnected(): Boolean {
+fun rememberVpnConnected(): Boolean =
+    rememberDefaultNetwork { it.hasTransport(NetworkCapabilities.TRANSPORT_VPN) }
+
+/** Vrai quand le réseau par défaut a accès à Internet (vérifié par Android). */
+@Composable
+fun rememberOnline(): Boolean =
+    rememberDefaultNetwork { it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) }
+
+/** Suit le réseau par défaut et renvoie `test` appliqué à ses capacités (faux sans réseau). */
+@Composable
+private fun rememberDefaultNetwork(test: (NetworkCapabilities) -> Boolean): Boolean {
     val context = LocalContext.current
     val cm = remember { context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
-    var connected by remember {
-        mutableStateOf(cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true)
+    var value by remember {
+        mutableStateOf(cm.getNetworkCapabilities(cm.activeNetwork)?.let(test) == true)
     }
 
     DisposableEffect(cm) {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                connected = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                value = test(caps)
             }
 
             override fun onLost(network: Network) {
-                connected = false
+                value = false
             }
         }
         cm.registerDefaultNetworkCallback(callback)
         onDispose { cm.unregisterNetworkCallback(callback) }
     }
-    return connected
+    return value
 }

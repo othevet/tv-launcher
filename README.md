@@ -9,10 +9,12 @@ Tuto complet : [Mon propre écran d'accueil Android TV, sans pubs](https://olivi
 
 ## Fonctions
 
-- Heure et date, météo du jour via [Open-Meteo](https://open-meteo.com) (sans clé d'API)
+- Fond en dégradé selon l'heure et la météo, cartes et boutons en verre façon Apple TV
+- Heure et date, météo du jour et du lendemain via [Open-Meteo](https://open-meteo.com) (sans clé d'API)
 - Indicateur « VPN connecté / déconnecté », qui ouvre l'app VPN
+- Bouton Sources : liste des entrées HDMI branchées, pour passer sur une box ou une console
+- Bouton Paramètres (seul accès aux réglages une fois l'accueil Google désactivé)
 - Grille d'apps : « + » pour ajouter, appui long pour déplacer ou retirer
-- Tuile Paramètres (seul accès aux réglages une fois l'accueil Google désactivé)
 
 ## Réglages
 
