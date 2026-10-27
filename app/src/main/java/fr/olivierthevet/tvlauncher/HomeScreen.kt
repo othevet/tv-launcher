@@ -405,9 +405,12 @@ private fun Clock() {
 private fun WeatherCard() {
     var weather by remember { mutableStateOf<Weather?>(null) }
     LaunchedEffect(Unit) {
+        // Au démarrage de la TV, le réseau (ou l'heure, nécessaire au HTTPS) n'est pas
+        // forcément prêt : en cas d'échec, on réessaie vite au lieu d'attendre 15 min.
         while (true) {
-            fetchWeather()?.let { weather = it }
-            delay(15 * 60 * 1_000L)
+            val result = fetchWeather()
+            if (result != null) weather = result
+            delay(if (result != null) 15 * 60 * 1_000L else 30 * 1_000L)
         }
     }
 
